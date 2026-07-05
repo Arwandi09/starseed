@@ -89,19 +89,27 @@ const Socket = async () => {
             process.exit(0)
          }
 
-         await delay(1500)
+         await delay(3000)
 
-         const code = await sock.requestPairingCode(botNumber)
+         try {
+            const code = await sock.requestPairingCode(botNumber)
 
-         const prettyCode = code.substring(0, 4) + '-' + code.substring(4)
-         console.log('🔗 Pairing code', ':', prettyCode, '\n')
+            const prettyCode = code.substring(0, 4) + '-' + code.substring(4)
+            console.log('🔗 Pairing code', ':', prettyCode, '\n')
 
-         let printStep = '📑 How to Login\n'
-         printStep += `1. On the WhatsApp home screen, tap (⋮) and select "Linked Devices".\n`
-         printStep += `2. Tap "Link with phone number instead".\n`
-         printStep += `3. Enter this code: ${prettyCode}.\n`
-         printStep += `4. This code will expire in 60 seconds.\n`
-         console.log(printStep)
+            let printStep = '📑 How to Login\n'
+            printStep += `1. On the WhatsApp home screen, tap (⋮) and select "Linked Devices".\n`
+            printStep += `2. Tap "Link with phone number instead".\n`
+            printStep += `3. Enter this code: ${prettyCode}.\n`
+            printStep += `4. This code will expire in 60 seconds.\n`
+            console.log(printStep)
+         }
+         catch (error) {
+            console.error('❌ Failed to request pairing code, retrying in 5s', ':', error?.message || error)
+            await delay(5000)
+            listener.unbind()
+            return Socket()
+         }
       }
 
       if (update.qr && !pairingCode) {
@@ -194,9 +202,12 @@ const Socket = async () => {
          store.setGroup(group.id, group)
    })
 
-   sock.ev.on('groups.update', (groups) => {
-      for (const group of groups)
-         listener.group(group.id)
+   sock.ev.on('groups.update', async (groups) => {
+      for (const group of groups) {
+         const didFetch = await listener.group(group.id, group)
+         if (didFetch)
+            await delay(2000)
+      }
    })
 
    sock.ev.on('call', async (calls) => {
