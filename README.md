@@ -1,4 +1,4 @@
-# ✴️ @itsliaaa/starseed
+# version Fixed for @itsliaaa/starseed
 
 ![Logo](https://files.catbox.moe/75q4r7.jpg)
 
